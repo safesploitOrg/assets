@@ -1,0 +1,495 @@
+---
+name: dnsmasq CI Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "dnsmasq/**"
+      - ".github/workflows/dnsmasq-ci.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "dnsmasq/**"
+      - ".github/workflows/dnsmasq-ci.yml"
+
+  workflow_dispatch:
+
+jobs:
+  validate-dnsmasq:
+    runs-on: ubuntu-latest
+
+    container:
+      image: almalinux:10
+
+    env:
+      DNSMASQ_SOURCE_DIR: dnsmasq
+      DNSMASQ_CONF_SOURCE_DIR: dnsmasq/dnsmasq.d
+      DNSMASQ_HOSTS_SOURCE_DIR: dnsmasq/hosts.d
+
+      DNSMASQ_CONF_TARGET_DIR: /etc/dnsmasq.d
+      DNSMASQ_HOSTS_TARGET_DIR: /etc/hosts.d
+
+      DNSMASQ_CI_DIR: /tmp/dnsmasq-ci
+      DNSMASQ_CI_CONF_DIR: /tmp/dnsmasq-ci/dnsmasq.d
+      DNSMASQ_CI_CONF: /tmp/dnsmasq-ci/dnsmasq-ci.conf
+      DNSMASQ_COMPILED_HOSTS: /tmp/dnsmasq-ci/compiled-hosts
+      DNSMASQ_PID_FILE: /tmp/dnsmasq-ci/dnsmasq.pid
+
+      DNSMASQ_PORT: 5353
+      DNSMASQ_DOMAIN: safesploit.com
+      DNSMASQ_STARTUP_TIMEOUT: 60s
+
+      # Test DNS records for CI validation
+      DNSMASQ_TEST_HOST: "ci-dnsmasq-test"
+      DNSMASQ_TEST_FQDN: "ci-dnsmasq-test.safesploit.com"
+      DNSMASQ_TEST_IP: "192.0.2.53"
+      # /etc/hosts.d/000-network.cfg contains the following test record:
+      DNSMASQ_TEST_RECORD_HOST: "router"
+      DNSMASQ_TEST_RECORD_FQDN: "router.safesploit.com"
+      DNSMASQ_TEST_RECORD_IP: "172.16.0.1"
+
+    steps:
+      # =========================
+      # Checkout Repository
+      # =========================
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+
+      # =========================
+      # Install Dependencies
+      # =========================
+      - name: 📦 Install dnsmasq packages
+        run: |
+          dnf install -y \
+            dnsmasq \
+            bind-utils \
+            rsync \
+            procps-ng
+
+      # =========================
+      # Prepare Filesystem
+      # =========================
+      - name: 🗂️ Prepare filesystem
+        run: |
+          mkdir -p "${DNSMASQ_CONF_TARGET_DIR}"
+          mkdir -p "${DNSMASQ_HOSTS_TARGET_DIR}"
+          mkdir -p "${DNSMASQ_CI_DIR}"
+          mkdir -p "${DNSMASQ_CI_CONF_DIR}"
+
+      # =========================
+      # Copy dnsmasq.d Configs
+      # =========================
+      - name: 📋 Copy dnsmasq.d configs
+        run: |
+          if [ ! -d "${DNSMASQ_CONF_SOURCE_DIR}" ]; then
+            echo "ERROR: Missing source directory: ${DNSMASQ_CONF_SOURCE_DIR}"
+            exit 1
+          fi
+
+          rsync -av \
+            "${DNSMASQ_CONF_SOURCE_DIR}/" \
+            "${DNSMASQ_CONF_TARGET_DIR}/"
+
+      # - name: 📋 Cat dnsmasq.d configs
+      #   run: |
+      #     echo "dnsmasq.d configs:"
+      #     find "${DNSMASQ_CONF_TARGET_DIR}" \
+      #       -type f \
+      #       -print \
+      #       -exec cat {} \;
+
+      # =========================
+      # Copy hosts.d Files
+      # =========================
+      - name: 📋 Copy hosts.d files
+        run: |
+          if [ ! -d "${DNSMASQ_HOSTS_SOURCE_DIR}" ]; then
+            echo "ERROR: Missing source directory: ${DNSMASQ_HOSTS_SOURCE_DIR}"
+            exit 1
+          fi
+
+          rsync -av \
+            "${DNSMASQ_HOSTS_SOURCE_DIR}/" \
+            "${DNSMASQ_HOSTS_TARGET_DIR}/"
+
+      # =========================
+      # Compile hosts.d For Validation
+      # =========================
+      - name: 🧩 Compile hosts.d files
+        run: |
+          : > "${DNSMASQ_COMPILED_HOSTS}"
+
+          find "${DNSMASQ_HOSTS_TARGET_DIR}" \
+            -type f \
+            | sort \
+            | while read -r file; do
+                echo "# ===== ${file} =====" >> "${DNSMASQ_COMPILED_HOSTS}"
+                cat "${file}" >> "${DNSMASQ_COMPILED_HOSTS}"
+                echo "" >> "${DNSMASQ_COMPILED_HOSTS}"
+              done
+
+          echo "Compiled hosts file:"
+          cat "${DNSMASQ_COMPILED_HOSTS}"
+
+      # =========================
+      # Validate hosts.d Format
+      # =========================
+      - name: 🧪 Validate hosts.d format
+        run: |
+          awk '
+            BEGIN {
+              errors = 0
+              ipv4 = "^([0-9]{1,3}\\.){3}[0-9]{1,3}$"
+              ipv6 = "^[0-9a-fA-F:]+$"
+              invalid_line_msg = \
+                "ERROR: Invalid hosts line in %s at line %d: %s\n"
+              invalid_ip_msg = \
+                "ERROR: First field is not an IPv4/IPv6 address in " \
+                "%s at line %d: %s\n"
+            }
+
+            /^[[:space:]]*$/ {
+              next
+            }
+
+            /^[[:space:]]*#/ {
+              next
+            }
+
+            {
+              if (NF < 2) {
+                printf(invalid_line_msg, FILENAME, FNR, $0)
+                errors++
+                next
+              }
+
+              if ($1 !~ ipv4 && $1 !~ ipv6) {
+                printf(invalid_ip_msg, FILENAME, FNR, $0)
+                errors++
+                next
+              }
+            }
+
+            END {
+              if (errors > 0) {
+                exit 1
+              }
+            }
+          ' "${DNSMASQ_COMPILED_HOSTS}"
+
+      # =========================
+      # Validate Duplicate Hostnames
+      # =========================
+      - name: 🔁 Validate duplicate hostnames
+        run: |
+          awk '
+            /^[[:space:]]*$/ {
+              next
+            }
+
+            /^[[:space:]]*#/ {
+              next
+            }
+
+            {
+              for (i = 2; i <= NF; i++) {
+                if ($i ~ /^#/) {
+                  break
+                }
+
+                host_count[$i]++
+                host_ip[$i] = host_ip[$i] " " $1
+              }
+            }
+
+            END {
+              duplicate_count = 0
+
+              for (host in host_count) {
+                if (host_count[host] > 1) {
+                  printf("ERROR: Duplicate hostname detected: %s ->%s\n",
+                    host, host_ip[host])
+                  duplicate_count++
+                }
+              }
+
+              if (duplicate_count > 0) {
+                exit 1
+              }
+            }
+          ' "${DNSMASQ_COMPILED_HOSTS}"
+
+      # =========================
+      # Create CI-safe dnsmasq.d
+      # =========================
+      # NOTE:
+      #   Production configs may contain homelab-specific values like:
+      #     listen-address=172.16.4.98
+      #     addn-hosts=/etc/hosts.d
+      #     no-daemon
+      #
+      #   These are valid on the real DNS server, but unsafe or noisy in CI.
+      # =========================
+      - name: 🛡️ Create CI-safe dnsmasq.d
+        run: |
+          rm -rf "${DNSMASQ_CI_CONF_DIR}"
+          mkdir -p "${DNSMASQ_CI_CONF_DIR}"
+
+          find "${DNSMASQ_CONF_TARGET_DIR}" \
+            -type f \
+            \( -name '*.conf' -o -name '*.cfg' \) \
+            | sort \
+            | while read -r file; do
+                target="${DNSMASQ_CI_CONF_DIR}/$(basename "${file}")"
+
+                sed \
+                  -e '/^[[:space:]]*listen-address[[:space:]]*=/d' \
+                  -e '/^[[:space:]]*interface[[:space:]]*=/d' \
+                  -e '/^[[:space:]]*except-interface[[:space:]]*=/d' \
+                  -e '/^[[:space:]]*bind-interfaces[[:space:]]*$/d' \
+                  -e '/^[[:space:]]*bind-dynamic[[:space:]]*$/d' \
+                  -e '/^[[:space:]]*addn-hosts[[:space:]]*=/d' \
+                  -e '/^[[:space:]]*no-daemon[[:space:]]*$/d' \
+                  -e '/^[[:space:]]*server[[:space:]]*=/d' \
+                  "${file}" > "${target}"
+              done
+
+          echo "Checking for unsafe CI directives..."
+
+          no_daemon_pattern='^[[:space:]]*no-daemon[[:space:]]*$'
+          addn_hosts_pattern='^[[:space:]]*addn-hosts[[:space:]]*='
+          listen_address_pattern='^[[:space:]]*listen-address[[:space:]]*='
+
+          if grep -RIn \
+            "${no_daemon_pattern}" \
+            "${DNSMASQ_CI_CONF_DIR}"
+          then
+            echo "ERROR: no-daemon found in CI-safe dnsmasq.d"
+            exit 1
+          fi
+
+          if grep -RIn \
+            "${addn_hosts_pattern}" \
+            "${DNSMASQ_CI_CONF_DIR}"
+          then
+            echo "ERROR: production addn-hosts found in CI-safe dnsmasq.d"
+            exit 1
+          fi
+
+          if grep -RIn \
+            "${listen_address_pattern}" \
+            "${DNSMASQ_CI_CONF_DIR}"
+          then
+            echo "ERROR: production listen-address found in CI-safe dnsmasq.d"
+            exit 1
+          fi
+
+          echo "CI-safe dnsmasq.d files:"
+          find "${DNSMASQ_CI_CONF_DIR}" \
+            -type f \
+            -print \
+            -exec cat {} \;
+
+      # =========================
+      # Create CI dnsmasq.conf
+      # =========================
+      - name: ⚙️ Create CI dnsmasq.conf
+        run: |
+          cat > "${DNSMASQ_CI_CONF}" <<EOF
+          port=${DNSMASQ_PORT}
+          pid-file=${DNSMASQ_PID_FILE}
+
+          # Add a test record for CI validation
+          host-record=${DNSMASQ_TEST_HOST},${DNSMASQ_TEST_FQDN},${DNSMASQ_TEST_IP}
+
+          no-resolv
+          listen-address=127.0.0.1
+
+          addn-hosts=${DNSMASQ_HOSTS_TARGET_DIR}
+          conf-dir=${DNSMASQ_CI_CONF_DIR},*.conf,*.cfg
+          EOF
+
+          echo "Generated CI dnsmasq.conf:"
+          cat "${DNSMASQ_CI_CONF}"
+
+      # =========================
+      # Validate dnsmasq Config
+      # =========================
+      - name: ✅ Validate dnsmasq config
+        run: |
+          if [ ! -f "${DNSMASQ_CI_CONF}" ]; then
+            echo "ERROR: CI dnsmasq config does not exist: ${DNSMASQ_CI_CONF}"
+            exit 1
+          fi
+
+          dnsmasq \
+            --test \
+            --conf-file="${DNSMASQ_CI_CONF}"
+
+      # =========================
+      # Start dnsmasq Server
+      # =========================
+      - name: 🚀 Start dnsmasq server
+        run: |
+          timeout "${DNSMASQ_STARTUP_TIMEOUT}" dnsmasq \
+            --conf-file="${DNSMASQ_CI_CONF}" \
+            --pid-file="${DNSMASQ_PID_FILE}"
+
+      # =========================
+      # Wait For Startup
+      # =========================
+      - name: ⏳ Wait for startup
+        run: |
+          sleep 3
+
+      # =========================
+      # Verify dnsmasq Running
+      # =========================
+      - name: 🔎 Verify dnsmasq process
+        run: |
+          if [ ! -f "${DNSMASQ_PID_FILE}" ]; then
+            echo "ERROR: dnsmasq PID file was not created"
+            exit 1
+          fi
+
+          DNSMASQ_PID="$(cat "${DNSMASQ_PID_FILE}")"
+
+          if ! kill -0 "${DNSMASQ_PID}" 2>/dev/null; then
+            echo "ERROR: dnsmasq process is not running"
+            exit 1
+          fi
+
+          echo "dnsmasq started successfully with PID: ${DNSMASQ_PID}"
+
+      # =========================
+      # Test Short Hostname Query (from CI test record)
+      # =========================
+      - name: 🌐 Test CI DNS short hostname query
+        run: |
+          TEST_HOST="${DNSMASQ_TEST_HOST}"
+          EXPECTED_IP="${DNSMASQ_TEST_IP}"
+
+          echo "Testing short hostname: ${TEST_HOST}"
+
+          RESULT=$(
+            dig @127.0.0.1 \
+              -p "${DNSMASQ_PORT}" \
+              "${TEST_HOST}" \
+              +short
+          )
+
+          echo "Result: ${RESULT}"
+
+          if ! printf '%s\n' "${RESULT}" | grep -Fxq "${EXPECTED_IP}"; then
+            echo "ERROR: Expected ${EXPECTED_IP}, got '${RESULT}'"
+            exit 1
+          fi
+
+      # =========================
+      # Test FQDN Query (from CI test record)
+      # =========================
+      - name: 🌍 Test CI DNS FQDN query
+        run: |
+          TEST_FQDN="${DNSMASQ_TEST_FQDN}"
+          EXPECTED_IP="${DNSMASQ_TEST_IP}"
+
+          echo "Testing FQDN: ${TEST_FQDN}"
+
+          RESULT=$(
+            dig @127.0.0.1 \
+              -p "${DNSMASQ_PORT}" \
+              "${TEST_FQDN}" \
+              +short
+          )
+
+          echo "Result: ${RESULT}"
+
+          if ! printf '%s\n' "${RESULT}" | grep -Fxq "${EXPECTED_IP}"; then
+            echo "ERROR: Expected ${EXPECTED_IP}, got '${RESULT}'"
+            exit 1
+          fi
+
+
+      # =========================
+      # Resolve Short Hostname Query (from /etc/hosts.d)
+      # =========================
+      - name: 🌐 Resolve DNS short hostname query
+        run: |
+          TEST_HOST="${DNSMASQ_TEST_RECORD_HOST}"
+          EXPECTED_IP="${DNSMASQ_TEST_RECORD_IP}"
+
+          echo "Testing short hostname: ${TEST_HOST}"
+
+          RESULT=$(
+            dig @127.0.0.1 \
+              -p "${DNSMASQ_PORT}" \
+              "${TEST_HOST}" \
+              +short
+          )
+
+          echo "Result: ${RESULT}"
+
+          if ! printf '%s\n' "${RESULT}" | grep -Fxq "${EXPECTED_IP}"; then
+            echo "ERROR: Expected ${EXPECTED_IP}, got '${RESULT}'"
+            exit 1
+          fi
+
+      # =========================
+      # Resolve FQDN Query (from /etc/hosts.d)
+      # =========================
+      - name: 🌍 Resolve DNS FQDN query
+        run: |
+          TEST_FQDN="${DNSMASQ_TEST_RECORD_FQDN}"
+          EXPECTED_IP="${DNSMASQ_TEST_RECORD_IP}"
+
+          echo "Testing FQDN: ${TEST_FQDN}"
+
+          RESULT=$(
+            dig @127.0.0.1 \
+              -p "${DNSMASQ_PORT}" \
+              "${TEST_FQDN}" \
+              +short
+          )
+
+          echo "Result: ${RESULT}"
+
+          if ! printf '%s\n' "${RESULT}" | grep -Fxq "${EXPECTED_IP}"; then
+            echo "ERROR: Expected ${EXPECTED_IP}, got '${RESULT}'"
+            exit 1
+          fi
+
+      # =========================
+      # Debug On Failure
+      # =========================
+      - name: 🧯 Debug dnsmasq on failure
+        if: failure()
+        run: |
+          echo "==== dnsmasq processes ===="
+          ps aux | grep dnsmasq || true
+
+          echo "==== Main CI dnsmasq.conf ===="
+          cat "${DNSMASQ_CI_CONF}" || true
+
+          echo "==== CI-safe dnsmasq.d ===="
+          find "${DNSMASQ_CI_CONF_DIR}" \
+            -type f \
+            -print \
+            -exec cat {} \; || true
+
+          echo "==== Compiled hosts ===="
+          cat "${DNSMASQ_COMPILED_HOSTS}" || true
+
+          echo "==== /etc/hosts.d ===="
+          find "${DNSMASQ_HOSTS_TARGET_DIR}" \
+            -type f \
+            -print \
+            -exec cat {} \; || true
+
+          echo "==== dnsmasq syntax test ===="
+          dnsmasq \
+            --test \
+            --conf-file="${DNSMASQ_CI_CONF}" || true

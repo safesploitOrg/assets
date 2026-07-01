@@ -191,14 +191,15 @@ fetch_remote_state() {
     cd "${CHECK_REPO_DIR}"
 
     git fetch \
+        --prune \
         origin \
-        "${BRANCH}" >/dev/null
+        "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}" >/dev/null
 }
 
 get_remote_dnsmasq_commit() {
     cd "${CHECK_REPO_DIR}"
 
-    git rev-parse "origin/${BRANCH}:dnsmasq" 2>/dev/null
+    git rev-parse "refs/remotes/origin/${BRANCH}:dnsmasq" 2>/dev/null
 }
 
 get_cached_commit() {
@@ -513,7 +514,10 @@ apply_updates() {
     # Done via CI too
     pre_deploy_checks
 
-    copy_dnsmasq_configs
+    # Disabling this for now, as it may cause issues with existing configs. 
+    # The CI pipeline should handle config validation.
+    # copy_dnsmasq_configs
+
     copy_hosts_files
     set_dnsmasq_permissions
     restart_dnsmasq

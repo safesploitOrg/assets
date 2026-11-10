@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Media URL Helper</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-soft: #1f2937;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --danger: #ff7b72;
+      --success: #3fb950;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top, #172033 0, var(--bg) 38%);
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(980px, 92vw);
+      margin: 0 auto;
+      padding: 48px 0;
+    }
+
+    header {
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      letter-spacing: -0.04em;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    .card {
+      background: rgba(22, 27, 34, 0.94);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-weight: 650;
+      margin-bottom: 8px;
+    }
+
+    textarea,
+    input,
+    select {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #0d1117;
+      color: var(--text);
+      padding: 12px 14px;
+      font: inherit;
+      outline: none;
+    }
+
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    textarea:focus,
+    input:focus,
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.18);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    @media (max-width: 720px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 10px 14px;
+      background: var(--panel-soft);
+      color: var(--text);
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #08111f;
+    }
+
+    button:hover {
+      border-color: var(--accent-hover);
+    }
+
+    .output-block {
+      margin-top: 18px;
+    }
+
+    .output-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .output-head h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .copy-btn {
+      padding: 7px 11px;
+      font-size: 0.88rem;
+    }
+
+    pre {
+      margin: 0;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow-x: auto;
+      background: #0d1117;
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 0.92rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .status {
+      min-height: 24px;
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .status.success {
+      color: var(--success);
+    }
+
+    .preview img {
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      margin-top: 12px;
+      background: #fff;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 8px;
+    }
+
+    footer {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 26px;
+    }
+
+    code {
+      color: var(--accent-hover);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>GitHub Media URL Helper</h1>
+      <p class="subtitle">Convert GitHub asset URLs into raw URLs, Markdown images, and centred HTML embeds.</p>
+    </header>
+
+    <section class="card">
+      <label for="githubUrl">GitHub file URL</label>
+      <textarea id="githubUrl" placeholder="Paste a GitHub file URL, for example:
+https://github.com/safesploit/assets/blob/main/repo/PassFabricator/media/gifs/demo.gif"></textarea>
+
+      <div class="grid">
+        <div>
+          <label for="altText">Alt text</label>
+          <input id="altText" type="text" placeholder="Demo image" />
+        </div>
+
+        <div>
+          <label for="width">HTML width</label>
+          <input id="width" type="number" min="100" max="1600" value="800" />
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="convertBtn" type="button">Convert URL</button>
+        <button id="clearBtn" type="button">Clear</button>
+      </div>
+
+      <div id="status" class="status"></div>
+    </section>
+
+    <section class="card">
+      <div class="output-block">
+        <div class="output-head">
+          <h2>Raw URL</h2>
+          <button class="copy-btn" data-copy="rawOutput" type="button">Copy</button>
+        </div>
+        <pre id="rawOutput"></pre>
+      </div>
+
+      <div class="output-block">
+        <div class="output-head">
+          <h2>Markdown</h2>
+          <button class="copy-btn" data-copy="markdownOutput" type="button">Copy</button>
+        </div>
+        <pre id="markdownOutput"></pre>
+      </div>
+
+      <div class="output-block">
+        <div class="output-head">
+          <h2>Centred HTML</h2>
+          <button class="copy-btn" data-copy="htmlOutput" type="button">Copy</button>
+        </div>
+        <pre id="htmlOutput"></pre>
+      </div>
+
+      <div class="output-block preview">
+        <div class="output-head">
+          <h2>Preview</h2>
+        </div>
+        <div id="previewOutput" class="hint">Preview appears after conversion.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Supported URL formats</h2>
+      <p class="hint">
+        Supports standard GitHub file URLs such as
+        <code>github.com/owner/repo/blob/branch/path/file.png</code>,
+        GitHub raw URLs, and <code>raw.githubusercontent.com</code> URLs.
+      </p>
+    </section>
+
+    <footer>
+      Built for media repositories used by GitHub READMEs, documentation, and project pages.
+    </footer>
+  </main>
+
+  <script>
+    const githubUrlEl = document.getElementById("githubUrl");
+    const altTextEl = document.getElementById("altText");
+    const widthEl = document.getElementById("width");
+    const statusEl = document.getElementById("status");
+    const rawOutputEl = document.getElementById("rawOutput");
+    const markdownOutputEl = document.getElementById("markdownOutput");
+    const htmlOutputEl = document.getElementById("htmlOutput");
+    const previewOutputEl = document.getElementById("previewOutput");
+
+    function setStatus(message, type = "") {
+      statusEl.textContent = message;
+      statusEl.className = `status ${type}`.trim();
+    }
+
+    function normaliseGithubUrl(input) {
+      const value = input.trim();
+
+      if (!value) {
+        throw new Error("Paste a GitHub file URL first.");
+      }
+
+      let url;
+
+      try {
+        url = new URL(value);
+      } catch {
+        throw new Error("That does not look like a valid URL.");
+      }
+
+      if (url.hostname === "raw.githubusercontent.com") {
+        return url.toString();
+      }
+
+      if (url.hostname !== "github.com") {
+        throw new Error("Only github.com and raw.githubusercontent.com URLs are supported.");
+      }
+
+      const parts = url.pathname.split("/").filter(Boolean);
+
+      if (parts.length < 5) {
+        throw new Error("Expected a GitHub file URL like /owner/repo/blob/branch/path/file.png.");
+      }
+
+      const [owner, repo, mode, branch, ...filePathParts] = parts;
+
+      if (!owner || !repo || !branch || filePathParts.length === 0) {
+        throw new Error("Could not find owner, repository, branch, and file path.");
+      }
+
+      if (mode !== "blob" && mode !== "raw") {
+        throw new Error("Expected a GitHub file URL containing /blob/ or /raw/.");
+      }
+
+      const filePath = filePathParts.map(encodeURIComponent).join("/");
+
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${filePath}`;
+    }
+
+    function guessAltText(rawUrl) {
+      const filename = decodeURIComponent(rawUrl.split("/").pop() || "image");
+      return filename
+        .replace(/\.[a-z0-9]+$/i, "")
+        .replace(/[-_]+/g, " ")
+        .replace(/\b\w/g, char => char.toUpperCase());
+    }
+
+    function convert() {
+      try {
+        const rawUrl = normaliseGithubUrl(githubUrlEl.value);
+        const altText = altTextEl.value.trim() || guessAltText(rawUrl);
+        const safeAltText = altText.replace(/"/g, "&quot;");
+        const width = widthEl.value || "800";
+
+        const markdown = `![${altText}](${rawUrl})`;
+        const html = `<p align="center">\n  <img src="${rawUrl}" alt="${safeAltText}" width="${width}">\n</p>`;
+
+        rawOutputEl.textContent = rawUrl;
+        markdownOutputEl.textContent = markdown;
+        htmlOutputEl.textContent = html;
+
+        previewOutputEl.innerHTML = "";
+        const img = document.createElement("img");
+        img.src = rawUrl;
+        img.alt = altText;
+        img.width = Math.min(Number(width) || 800, 900);
+        previewOutputEl.appendChild(img);
+
+        setStatus("Converted successfully.", "success");
+      } catch (error) {
+        rawOutputEl.textContent = "";
+        markdownOutputEl.textContent = "";
+        htmlOutputEl.textContent = "";
+        previewOutputEl.textContent = "Preview appears after conversion.";
+        previewOutputEl.className = "hint";
+        setStatus(error.message, "error");
+      }
+    }
+
+    async function copyFromElement(elementId) {
+      const text = document.getElementById(elementId).textContent;
+
+      if (!text) {
+        setStatus("Nothing to copy yet.", "error");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(text);
+        setStatus("Copied to clipboard.", "success");
+      } catch {
+        setStatus("Clipboard copy failed. Select the text and copy it manually.", "error");
+      }
+    }
+
+    document.getElementById("convertBtn").addEventListener("click", convert);
+
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      githubUrlEl.value = "";
+      altTextEl.value = "";
+      widthEl.value = "800";
+      rawOutputEl.textContent = "";
+      markdownOutputEl.textContent = "";
+      htmlOutputEl.textContent = "";
+      previewOutputEl.textContent = "Preview appears after conversion.";
+      previewOutputEl.className = "hint";
+      setStatus("");
+      githubUrlEl.focus();
+    });
+
+    document.querySelectorAll("[data-copy]").forEach(button => {
+      button.addEventListener("click", () => copyFromElement(button.dataset.copy));
+    });
+
+    githubUrlEl.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        convert();
+      }
+    });
+  </script>
+</body>
+</html>

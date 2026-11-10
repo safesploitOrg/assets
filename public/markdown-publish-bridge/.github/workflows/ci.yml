@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# SFW-EXC-001: Playwright is intentionally NOT an automatic CI job.
+# The owner requested manual/local browser verification instead.
+# See docs/engineering/EXCEPTIONS.md and docs/testing.md.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Syntax, structure, unit and integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Verify HTML/CSS guardrails and JavaScript syntax
+        run: npm run lint
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests
+        run: npm run test:integration
+
+  security:
+    name: Security regressions and dependency policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository (full history for secret scanning)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-fund
+      - name: Security negative tests
+        run: npm run test:security
+      - name: Scoped source and secret checks (heuristic)
+        run: npm run scan:static
+      - name: Install Gitleaks v8.30.1 (SHA-256 pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --silent --show-error \
+            --output "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum --check --status
+          tar --extract --gzip --file "$RUNNER_TEMP/gitleaks.tar.gz" --directory "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+      - name: Gitleaks working-tree secret scan (blocking)
+        run: |
+          "$RUNNER_TEMP/gitleaks" dir . --no-banner --redact --exit-code 1
+      - name: Gitleaks history secret scan (blocking)
+        run: |
+          "$RUNNER_TEMP/gitleaks" git . --no-banner --redact --exit-code 1
+      - name: Dependency vulnerability audit (High+ blocks)
+        run: npm audit --audit-level=high
